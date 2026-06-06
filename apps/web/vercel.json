@@ -1,0 +1,4 @@
+{
+  "buildCommand": "cd ../.. && pnpm --filter @screenflow/web build",
+  "installCommand": "cd ../.. && pnpm install"
+}
