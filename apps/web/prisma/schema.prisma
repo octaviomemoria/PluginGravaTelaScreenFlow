@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Plan {
+  FREE
+  PRO
+  BUSINESS
+}
+
+enum Visibility {
+  PRIVATE
+  LINK
+  PUBLIC
+}
+
+enum TranscriptStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+model User {
+  id               String   @id @default(cuid())
+  email            String   @unique
+  name             String?
+  avatarUrl        String?
+  plan             Plan     @default(FREE)
+  stripeCustomerId String?  @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Google Drive OAuth tokens
+  googleAccessToken  String?
+  googleRefreshToken String?
+  googleTokenExpiry  DateTime?
+  googleDriveConnected Boolean @default(false)
+
+  videos        Video[]
+  monthlyUsages MonthlyUsage[]
+
+  @@map("users")
+}
+
+model Video {
+  id              String     @id @default(cuid())
+  publicId        String     @unique @default(cuid())
+  title           String     @default("Sem título")
+  description     String?
+  googleDriveFileId String?  @unique
+  playbackUrl     String?
+  thumbnailUrl    String?
+  durationSeconds Float?
+  recordingMinutes Float     @default(0)
+  mimeType        String     @default("video/webm")
+  visibility      Visibility @default(LINK)
+  linkExpiresAt   DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  transcript Transcript?
+
+  @@index([userId])
+  @@index([publicId])
+  @@index([linkExpiresAt])
+  @@map("videos")
+}
+
+model MonthlyUsage {
+  id                        String @id @default(cuid())
+  year                      Int
+  month                     Int
+  recordingMinutesUsed      Float  @default(0)
+  transcriptionMinutesUsed  Float  @default(0)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, year, month])
+  @@index([userId])
+  @@map("monthly_usage")
+}
+
+model Transcript {
+  id        String           @id @default(cuid())
+  language  String           @default("pt-BR")
+  fullText  String?
+  segments  Json?
+  status    TranscriptStatus @default(PENDING)
+  errorMsg  String?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  videoId String @unique
+  video   Video  @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@map("transcripts")
+}
