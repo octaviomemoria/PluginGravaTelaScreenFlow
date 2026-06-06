@@ -63,7 +63,7 @@ export default function SignupPage() {
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
           <h1 className="text-2xl font-bold">Criar conta grátis</h1>
-          <p className="text-text-secondary mt-1 text-sm">25 vídeos grátis, sem cartão</p>
+          <p className="text-text-secondary mt-1 text-sm">2h de gravação grátis, sem cartão</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
