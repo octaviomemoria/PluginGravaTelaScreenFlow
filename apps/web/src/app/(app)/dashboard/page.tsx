@@ -1,6 +1,7 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import { getUserVideos, getUserWithUsage } from "@/server/queries"
+import { getOrCreateDbUser } from "@/server/auth"
 import { PLAN_LIMITS } from "@screenflow/shared"
 import type { Plan } from "@screenflow/shared"
 import { VideoCard } from "@/components/video/VideoCard"
@@ -16,6 +17,8 @@ export default async function DashboardPage({ searchParams }: Props) {
   const supabase = await createSupabaseServerClient()
   const { data: { user: authUser } } = await supabase.auth.getUser()
   if (!authUser) redirect("/login")
+
+  await getOrCreateDbUser(authUser)
 
   const [videos, { user, usage }] = await Promise.all([
     getUserVideos(authUser.id, q),
