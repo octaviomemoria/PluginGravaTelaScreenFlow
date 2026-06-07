@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation"
 import Link from "next/link"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
-import { prisma } from "@/lib/prisma"
 import { getOrCreateDbUser } from "@/server/auth"
 import { LogoutButton } from "@/components/auth/LogoutButton"
 
@@ -10,7 +9,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect("/login")
 
-  const dbUser = await getOrCreateDbUser(user)
+  let dbUser: { plan: string; name: string | null; email: string } | null = null
+  try {
+    dbUser = await getOrCreateDbUser(user)
+  } catch (err) {
+    console.error("[AppLayout] getOrCreateDbUser failed:", err)
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -25,7 +29,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               Conta
             </Link>
             <Link href="/settings/billing" className="text-sm text-text-secondary hover:text-text-primary transition-colors">
-              {dbUser.plan === "FREE" ? (
+              {dbUser?.plan === "FREE" || !dbUser ? (
                 <span className="flex items-center gap-1">
                   <span className="text-accent">↑</span> Upgrade
                 </span>
@@ -35,7 +39,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 </span>
               )}
             </Link>
-            <div className="text-sm text-text-secondary truncate max-w-[150px]">{dbUser.name ?? dbUser.email}</div>
+            <div className="text-sm text-text-secondary truncate max-w-[150px]">{dbUser?.name ?? user.email}</div>
             <LogoutButton />
           </div>
         </div>
