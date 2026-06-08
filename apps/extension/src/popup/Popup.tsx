@@ -66,6 +66,9 @@ export function Popup() {
     if (res) {
       setState(res.state)
       setElapsed(res.elapsed)
+      if (res.uploadPercent !== undefined) setUploadPercent(res.uploadPercent)
+      if (res.errorMessage) setError(res.errorMessage)
+      if (res.result) setResult(res.result)
     }
   }
 

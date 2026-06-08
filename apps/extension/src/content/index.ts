@@ -1,27 +1,45 @@
 import type { ExtensionMessage } from "../types"
 
 let floatingBarContainer: HTMLElement | null = null
-let cameraContainer: HTMLElement | null = null
 let elapsed = 0
 let timerEl: HTMLElement | null = null
 let isPaused = false
+
+// Announce the extension is installed on this page
+document.dispatchEvent(new CustomEvent("screenflow-ready"))
+
+// Listen for recording trigger from the dashboard web page
+window.addEventListener("message", (e) => {
+  if (e.data?.type === "SCREENFLOW_START_RECORDING") {
+    const config = e.data.config ?? {
+      mode: "screen",
+      micDeviceId: null,
+      cameraDeviceId: null,
+      captureSystemAudio: false,
+    }
+    chrome.runtime.sendMessage({ type: "START_RECORDING", config })
+  }
+})
 
 function createFloatingBar() {
   if (floatingBarContainer) return
 
   const shadowHost = document.createElement("div")
   shadowHost.id = "screenflow-bar-host"
+  // Start at bottom-right; will switch to left/top on first drag
   shadowHost.style.cssText = `
     position: fixed;
+    right: 24px;
     bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%);
     z-index: 2147483647;
     font-family: 'Inter', system-ui, sans-serif;
+    touch-action: none;
+    cursor: grab;
   `
   document.body.appendChild(shadowHost)
 
   const shadow = shadowHost.attachShadow({ mode: "open" })
+
   const style = document.createElement("style")
   style.textContent = `
     .bar {
@@ -42,6 +60,7 @@ function createFloatingBar() {
       border-radius: 50%;
       background: #ef4444;
       animation: pulse 1.5s infinite;
+      flex-shrink: 0;
     }
     .rec-dot.paused { background: #eab308; animation: none; }
     @keyframes pulse {
@@ -56,7 +75,7 @@ function createFloatingBar() {
       min-width: 48px;
       text-align: center;
     }
-    .sep { width: 1px; height: 20px; background: #334155; }
+    .sep { width: 1px; height: 20px; background: #334155; flex-shrink: 0; }
     button {
       border: none;
       background: none;
@@ -64,16 +83,17 @@ function createFloatingBar() {
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 4px;
+      padding: 4px 8px;
       border-radius: 6px;
       transition: background 0.15s;
       font-size: 13px;
       font-weight: 600;
+      white-space: nowrap;
     }
     button:hover { background: #334155; }
     .btn-stop { color: #22C55E; }
     .btn-pause { color: #94A3B8; }
-    .btn-cancel { color: #ef4444; font-size: 11px; }
+    .btn-cancel { color: #ef4444; font-size: 11px; padding: 4px 6px; }
   `
   shadow.appendChild(style)
 
@@ -103,7 +123,7 @@ function createFloatingBar() {
 
   const btnStop = document.createElement("button")
   btnStop.className = "btn-stop"
-  btnStop.innerHTML = "⏹ Parar"
+  btnStop.innerHTML = "■ Parar"
   btnStop.onclick = () => chrome.runtime.sendMessage({ type: "STOP_RECORDING" })
 
   const sep2 = document.createElement("div")
@@ -112,22 +132,68 @@ function createFloatingBar() {
   const btnCancel = document.createElement("button")
   btnCancel.className = "btn-cancel"
   btnCancel.innerHTML = "✕"
-  btnCancel.title = "Cancelar"
+  btnCancel.title = "Cancelar gravação"
   btnCancel.onclick = () => chrome.runtime.sendMessage({ type: "CANCEL_RECORDING" })
 
   bar.append(dot, timerEl, sep1, btnPause, btnStop, sep2, btnCancel)
   shadow.appendChild(bar)
 
   floatingBarContainer = shadowHost
-
-  // Store references for updates
   ;(shadowHost as any).__dot = dot
   ;(shadowHost as any).__btnPause = btnPause
+
+  // ── Drag-to-move ─────────────────────────────────────────────────────────
+  let dragging = false
+  let dragOffX = 0
+  let dragOffY = 0
+  let usedLeftTop = false  // once we start dragging, switch to left/top positioning
+
+  function switchToLeftTop() {
+    if (usedLeftTop) return
+    usedLeftTop = true
+    const rect = shadowHost.getBoundingClientRect()
+    shadowHost.style.right = "unset"
+    shadowHost.style.bottom = "unset"
+    shadowHost.style.left = `${rect.left}px`
+    shadowHost.style.top = `${rect.top}px`
+  }
+
+  shadowHost.addEventListener("mousedown", (e) => {
+    // Ignore if clicking a button inside the shadow DOM
+    const path = e.composedPath()
+    if (path.some((el) => (el as HTMLElement).tagName === "BUTTON")) return
+
+    e.preventDefault()
+    switchToLeftTop()
+    dragging = true
+    dragOffX = e.clientX - shadowHost.getBoundingClientRect().left
+    dragOffY = e.clientY - shadowHost.getBoundingClientRect().top
+    shadowHost.style.cursor = "grabbing"
+  })
+
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return
+    let newLeft = e.clientX - dragOffX
+    let newTop = e.clientY - dragOffY
+    const rect = shadowHost.getBoundingClientRect()
+    // Keep within viewport
+    newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - rect.width))
+    newTop = Math.max(0, Math.min(newTop, window.innerHeight - rect.height))
+    shadowHost.style.left = `${newLeft}px`
+    shadowHost.style.top = `${newTop}px`
+  })
+
+  document.addEventListener("mouseup", () => {
+    if (!dragging) return
+    dragging = false
+    shadowHost.style.cursor = "grab"
+  })
 }
 
 function updateFloatingBar(elapsedSec: number, paused: boolean) {
   if (!floatingBarContainer) return
   isPaused = paused
+  elapsed = elapsedSec
   const dot = (floatingBarContainer as any).__dot as HTMLElement
   const btnPause = (floatingBarContainer as any).__btnPause as HTMLButtonElement
 
@@ -145,6 +211,7 @@ function removeFloatingBar() {
   floatingBarContainer?.remove()
   floatingBarContainer = null
   timerEl = null
+  elapsed = 0
 }
 
 // Listen for messages from background
@@ -162,6 +229,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage) => {
     case "STATE_UPDATE":
       if (message.state === "paused") updateFloatingBar(message.elapsed, true)
       if (message.state === "recording") updateFloatingBar(message.elapsed, false)
+      if (message.state === "idle" || message.state === "done" || message.state === "error") removeFloatingBar()
       break
   }
 })

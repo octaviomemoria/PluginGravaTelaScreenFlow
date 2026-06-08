@@ -18,7 +18,7 @@ export async function clearAuthToken(): Promise<void> {
 
 export async function getApiUrl(): Promise<string> {
   const result = await chrome.storage.local.get(API_URL_KEY)
-  return (result[API_URL_KEY] as string) ?? "https://screenflow.app"
+  return (result[API_URL_KEY] as string) ?? "https://plugin-grava-tela-screen-flow-exten.vercel.app"
 }
 
 export async function setApiUrl(url: string): Promise<void> {

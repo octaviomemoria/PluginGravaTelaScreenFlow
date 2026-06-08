@@ -4,19 +4,19 @@ let mediaRecorder: MediaRecorder | null = null
 let recordedChunks: Blob[] = []
 let displayStream: MediaStream | null = null
 let cameraStream: MediaStream | null = null
+let micStream: MediaStream | null = null
 let combinedStream: MediaStream | null = null
 let startTime: number | null = null
-let canvas: OffscreenCanvas | null = null
 let thumbnailDataUrl: string | null = null
+let isCancelled = false
+let animHandle: number | null = null
 
 async function captureScreenThumbnail(stream: MediaStream): Promise<string | undefined> {
   try {
     const track = stream.getVideoTracks()[0]
     if (!track) return undefined
-
     const imageCapture = new (window as any).ImageCapture(track)
     const bitmap = await imageCapture.grabFrame()
-
     const c = document.createElement("canvas")
     c.width = Math.min(bitmap.width, 1280)
     c.height = Math.round((c.width / bitmap.width) * bitmap.height)
@@ -30,60 +30,125 @@ async function captureScreenThumbnail(stream: MediaStream): Promise<string | und
 
 async function startRecording(config: RecordingConfig) {
   recordedChunks = []
+  isCancelled = false
+  animHandle = null
   startTime = Date.now()
+  thumbnailDataUrl = null
 
   try {
+    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+      ? "video/webm;codecs=vp9,opus"
+      : "video/webm"
+
     if (config.mode === "camera") {
+      // Camera only
       cameraStream = await navigator.mediaDevices.getUserMedia({
         video: config.cameraDeviceId ? { deviceId: config.cameraDeviceId } : true,
         audio: config.micDeviceId ? { deviceId: config.micDeviceId } : true,
       })
       combinedStream = cameraStream
     } else {
+      // Screen capture
       displayStream = await navigator.mediaDevices.getDisplayMedia({
         video: { frameRate: 30 },
         audio: config.captureSystemAudio,
       })
 
-      const tracks = [...displayStream.getTracks()]
+      // Microphone
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: config.micDeviceId ? { deviceId: config.micDeviceId } : true,
+          video: false,
+        })
+      } catch {
+        micStream = null
+      }
 
-      if (config.mode === "screen+camera" && config.cameraDeviceId !== null) {
+      if (config.mode === "screen+camera") {
+        // Try to get camera
         try {
           cameraStream = await navigator.mediaDevices.getUserMedia({
-            video: config.cameraDeviceId ? { deviceId: config.cameraDeviceId } : true,
+            video: config.cameraDeviceId ? { deviceId: { exact: config.cameraDeviceId } } : true,
           })
         } catch {
-          // Camera failed, continue without it
+          cameraStream = null
         }
       }
 
-      if (config.micDeviceId !== undefined) {
-        try {
-          const micStream = await navigator.mediaDevices.getUserMedia({
-            audio: config.micDeviceId ? { deviceId: config.micDeviceId } : true,
-            video: false,
-          })
-          micStream.getAudioTracks().forEach((t) => tracks.push(t))
-        } catch {
-          // Mic failed, continue without it
+      if (config.mode === "screen+camera" && cameraStream) {
+        // Canvas compositing: screen + circular camera bubble in the bottom-right
+        const screenTrack = displayStream.getVideoTracks()[0]!
+        const settings = screenTrack.getSettings()
+        const W = settings.width || 1920
+        const H = settings.height || 1080
+
+        const compositeCanvas = document.createElement("canvas")
+        compositeCanvas.width = W
+        compositeCanvas.height = H
+        const ctx = compositeCanvas.getContext("2d")!
+
+        const screenVid = document.createElement("video")
+        screenVid.srcObject = displayStream
+        screenVid.muted = true
+        await new Promise<void>((res) => {
+          screenVid.onloadedmetadata = () => { screenVid.play().then(res).catch(res) }
+        })
+
+        const camVid = document.createElement("video")
+        camVid.srcObject = cameraStream
+        camVid.muted = true
+        await new Promise<void>((res) => {
+          camVid.onloadedmetadata = () => { camVid.play().then(res).catch(res) }
+        })
+
+        const camRadius = Math.round(Math.min(W, H) * 0.13)
+        const margin = Math.round(Math.min(W, H) * 0.025)
+        const cx = W - margin - camRadius
+        const cy = H - margin - camRadius
+
+        function draw() {
+          ctx.drawImage(screenVid, 0, 0, W, H)
+          // Draw circular camera bubble
+          ctx.save()
+          ctx.beginPath()
+          ctx.arc(cx, cy, camRadius, 0, Math.PI * 2)
+          ctx.clip()
+          ctx.drawImage(camVid, cx - camRadius, cy - camRadius, camRadius * 2, camRadius * 2)
+          ctx.restore()
+          // White border around bubble
+          ctx.beginPath()
+          ctx.arc(cx, cy, camRadius + 2, 0, Math.PI * 2)
+          ctx.strokeStyle = "rgba(255,255,255,0.8)"
+          ctx.lineWidth = 3
+          ctx.stroke()
+          animHandle = requestAnimationFrame(draw)
         }
+        draw()
+
+        const canvasStream = compositeCanvas.captureStream(30)
+        const audioTracks: MediaStreamTrack[] = []
+        micStream?.getAudioTracks().forEach((t) => audioTracks.push(t))
+        displayStream.getAudioTracks().forEach((t) => audioTracks.push(t))
+        combinedStream = new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks])
+      } else {
+        // Screen only (or screen + mic)
+        const tracks = [...displayStream.getTracks()]
+        micStream?.getAudioTracks().forEach((t) => tracks.push(t))
+        combinedStream = new MediaStream(tracks)
       }
 
-      combinedStream = new MediaStream(tracks)
-
-      // Capture thumbnail 2s after start
+      // Capture thumbnail at 2s
       setTimeout(async () => {
-        thumbnailDataUrl = (await captureScreenThumbnail(displayStream!)) ?? null
+        if (!isCancelled) {
+          thumbnailDataUrl = (await captureScreenThumbnail(displayStream!)) ?? null
+        }
       }, 2000)
     }
 
+    // Stop recording when user ends screen share natively
     displayStream?.getVideoTracks()[0]?.addEventListener("ended", () => {
-      stopRecording()
+      if (!isCancelled) stopRecording()
     })
-
-    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
-      ? "video/webm;codecs=vp9,opus"
-      : "video/webm"
 
     mediaRecorder = new MediaRecorder(combinedStream, { mimeType })
 
@@ -92,12 +157,24 @@ async function startRecording(config: RecordingConfig) {
     }
 
     mediaRecorder.onstop = async () => {
+      // Stop canvas compositing
+      if (animHandle !== null) {
+        cancelAnimationFrame(animHandle)
+        animHandle = null
+      }
+
+      if (isCancelled) {
+        // Don't upload — just clean up
+        stopStreams()
+        return
+      }
+
       const blob = new Blob(recordedChunks, { type: mimeType })
       const durationSeconds = startTime ? (Date.now() - startTime) / 1000 : 0
 
       const reader = new FileReader()
       reader.onloadend = () => {
-        const base64 = (reader.result as string).split(",")[1]
+        const base64 = (reader.result as string).split(",")[1]!
         chrome.runtime.sendMessage({
           type: "VIDEO_READY",
           blobBase64: base64,
@@ -118,7 +195,9 @@ async function startRecording(config: RecordingConfig) {
 }
 
 function stopRecording() {
-  mediaRecorder?.stop()
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop()
+  }
 }
 
 function pauseRecording() {
@@ -130,16 +209,25 @@ function resumeRecording() {
 }
 
 function cancelRecording() {
-  mediaRecorder?.stop()
-  recordedChunks = []
-  stopStreams()
+  isCancelled = true
+  if (animHandle !== null) {
+    cancelAnimationFrame(animHandle)
+    animHandle = null
+  }
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop()
+  } else {
+    stopStreams()
+  }
 }
 
 function stopStreams() {
   displayStream?.getTracks().forEach((t) => t.stop())
   cameraStream?.getTracks().forEach((t) => t.stop())
+  micStream?.getTracks().forEach((t) => t.stop())
   displayStream = null
   cameraStream = null
+  micStream = null
   combinedStream = null
 }
 

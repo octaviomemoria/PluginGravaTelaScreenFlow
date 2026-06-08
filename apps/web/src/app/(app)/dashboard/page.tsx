@@ -6,6 +6,7 @@ import { PLAN_LIMITS } from "@screenflow/shared"
 import type { Plan } from "@screenflow/shared"
 import { VideoCard } from "@/components/video/VideoCard"
 import { EmptyState } from "@/components/video/EmptyState"
+import { StartRecordingButton } from "@/components/video/StartRecordingButton"
 import Link from "next/link"
 
 interface Props {
@@ -61,14 +62,17 @@ export default async function DashboardPage({ searchParams }: Props) {
             </div>
           )}
         </div>
-        <form className="flex-1 max-w-xs">
-          <input
-            name="q"
-            defaultValue={q}
-            placeholder="Buscar vídeos..."
-            className="w-full px-3 py-2 bg-surface border border-border rounded-lg text-sm placeholder:text-text-secondary/50 focus:outline-none focus:border-accent transition-colors"
-          />
-        </form>
+        <div className="flex items-center gap-3 flex-wrap">
+          <form>
+            <input
+              name="q"
+              defaultValue={q}
+              placeholder="Buscar vídeos..."
+              className="w-56 px-3 py-2 bg-surface border border-border rounded-lg text-sm placeholder:text-text-secondary/50 focus:outline-none focus:border-accent transition-colors"
+            />
+          </form>
+          <StartRecordingButton />
+        </div>
       </div>
 
       {videos.length === 0 ? (
