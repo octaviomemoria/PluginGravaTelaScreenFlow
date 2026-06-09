@@ -35,6 +35,13 @@ async function startRecording(config: RecordingConfig) {
   startTime = Date.now()
   thumbnailDataUrl = null
 
+  console.log("[SF] startRecording", {
+    mode: config.mode,
+    cameraDeviceId: config.cameraDeviceId,
+    micDeviceId: config.micDeviceId,
+    captureSystemAudio: config.captureSystemAudio,
+  })
+
   try {
     const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
       ? "video/webm;codecs=vp9,opus"
@@ -70,10 +77,24 @@ async function startRecording(config: RecordingConfig) {
           cameraStream = await navigator.mediaDevices.getUserMedia({
             video: config.cameraDeviceId ? { deviceId: { exact: config.cameraDeviceId } } : true,
           })
-        } catch {
+          console.log("[SF] câmera adquirida", {
+            videoTracks: cameraStream.getVideoTracks().length,
+            label: cameraStream.getVideoTracks()[0]?.label,
+          })
+        } catch (camErr) {
           cameraStream = null
+          console.error("[SF] FALHA ao adquirir câmera (getUserMedia)", camErr)
         }
       }
+
+      console.log("[SF] ramo de gravação:", {
+        mode: config.mode,
+        cameraStream: !!cameraStream,
+        branch:
+          config.mode === "screen+camera" && cameraStream
+            ? "compositing (tela+câmera)"
+            : "só-tela",
+      })
 
       if (config.mode === "screen+camera" && cameraStream) {
         // Canvas compositing: screen + circular camera bubble in the bottom-right
@@ -106,6 +127,14 @@ async function startRecording(config: RecordingConfig) {
         const cx = W - margin - camRadius
         const cy = H - margin - camRadius
 
+        console.log("[SF] compositing iniciado", {
+          W, H,
+          screenVidReady: screenVid.readyState,
+          camVidReady: camVid.readyState,
+          camVidSize: `${camVid.videoWidth}x${camVid.videoHeight}`,
+        })
+
+        let frameCount = 0
         function draw() {
           ctx.drawImage(screenVid, 0, 0, W, H)
           // Draw circular camera bubble
@@ -121,11 +150,18 @@ async function startRecording(config: RecordingConfig) {
           ctx.strokeStyle = "rgba(255,255,255,0.8)"
           ctx.lineWidth = 3
           ctx.stroke()
+          frameCount++
+          if (frameCount % 30 === 0) {
+            console.log(`[SF] draw loop ativo — ${frameCount} frames desenhados`)
+          }
           animHandle = requestAnimationFrame(draw)
         }
         draw()
 
         const canvasStream = compositeCanvas.captureStream(30)
+        console.log("[SF] canvasStream criado", {
+          videoTracks: canvasStream.getVideoTracks().length,
+        })
         const audioTracks: MediaStreamTrack[] = []
         micStream?.getAudioTracks().forEach((t) => audioTracks.push(t))
         displayStream.getAudioTracks().forEach((t) => audioTracks.push(t))
@@ -150,13 +186,27 @@ async function startRecording(config: RecordingConfig) {
       if (!isCancelled) stopRecording()
     })
 
+    console.log("[SF] combinedStream", {
+      videoTracks: combinedStream!.getVideoTracks().length,
+      audioTracks: combinedStream!.getAudioTracks().length,
+    })
+
     mediaRecorder = new MediaRecorder(combinedStream, { mimeType })
 
+    let totalBytes = 0
     mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) recordedChunks.push(e.data)
+      if (e.data.size > 0) {
+        recordedChunks.push(e.data)
+        totalBytes += e.data.size
+      }
     }
 
     mediaRecorder.onstop = async () => {
+      console.log("[SF] mediaRecorder.onstop disparado", {
+        chunks: recordedChunks.length,
+        totalBytes,
+        isCancelled,
+      })
       // Stop canvas compositing
       if (animHandle !== null) {
         cancelAnimationFrame(animHandle)
@@ -171,19 +221,35 @@ async function startRecording(config: RecordingConfig) {
 
       const blob = new Blob(recordedChunks, { type: mimeType })
       const durationSeconds = startTime ? (Date.now() - startTime) / 1000 : 0
+      console.log("[SF] blob montado", { size: blob.size, type: blob.type, durationSeconds })
 
       const reader = new FileReader()
       reader.onloadend = () => {
         const base64 = (reader.result as string).split(",")[1]!
-        chrome.runtime.sendMessage({
-          type: "VIDEO_READY",
-          blobBase64: base64,
-          mimeType: blob.type,
-          durationSeconds,
-          thumbnailDataUrl,
+        console.log("[SF] enviando VIDEO_READY", {
+          base64Length: base64?.length ?? 0,
+          approxMB: ((base64?.length ?? 0) / 1.37 / 1024 / 1024).toFixed(2),
         })
+        try {
+          chrome.runtime.sendMessage({
+            type: "VIDEO_READY",
+            blobBase64: base64,
+            mimeType: blob.type,
+            durationSeconds,
+            thumbnailDataUrl,
+          }, () => {
+            if (chrome.runtime.lastError) {
+              console.error("[SF] FALHA no envio do VIDEO_READY:", chrome.runtime.lastError.message)
+            } else {
+              console.log("[SF] VIDEO_READY entregue ao service worker")
+            }
+          })
+        } catch (sendErr) {
+          console.error("[SF] EXCEÇÃO ao enviar VIDEO_READY:", sendErr)
+        }
       }
       reader.onerror = () => {
+        console.error("[SF] FileReader falhou ao ler o blob")
         chrome.runtime.sendMessage({ type: "RECORDING_ERROR", message: "Falha ao processar o vídeo gravado. Tente novamente." })
       }
       reader.readAsDataURL(blob)
@@ -192,14 +258,19 @@ async function startRecording(config: RecordingConfig) {
     }
 
     mediaRecorder.start(1000)
+    console.log("[SF] mediaRecorder.start()", { state: mediaRecorder.state, mimeType })
   } catch (err) {
+    console.error("[SF] EXCEÇÃO em startRecording:", err)
     chrome.runtime.sendMessage({ type: "RECORDING_ERROR", message: String(err) })
   }
 }
 
 function stopRecording() {
+  console.log("[SF] stopRecording chamado", { state: mediaRecorder?.state })
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
     mediaRecorder.stop()
+  } else {
+    console.warn("[SF] stopRecording: mediaRecorder inativo ou nulo — onstop não vai disparar")
   }
 }
 
@@ -233,6 +304,8 @@ function stopStreams() {
   micStream = null
   combinedStream = null
 }
+
+console.log("[SF] offscreen recorder.ts carregado")
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage) => {
   switch (message.type) {

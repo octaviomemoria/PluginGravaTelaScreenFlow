@@ -38,6 +38,7 @@ async function restoreState() {
     saved.recordingState === "paused" ||
     saved.recordingState === "uploading"
   ) {
+    console.warn("[SF] restoreState: SW foi reiniciado durante", saved.recordingState, "→ marcando como erro (pode descartar VIDEO_READY pendente)")
     recordingState = "error"
     lastErrorMessage = "A gravação foi interrompida inesperadamente. Tente novamente."
     uploadPercent = 0
@@ -172,6 +173,7 @@ async function handleStartRecording(config: RecordingConfig) {
 }
 
 async function handleStopRecording() {
+  console.log("[SF] handleStopRecording: state→uploading, repassando STOP ao offscreen")
   stopTimer()
   setState("uploading")
   broadcastToContent({ type: "HIDE_FLOATING_BAR" })
@@ -199,10 +201,12 @@ function handleCancelRecording() {
 
 async function handleVideoReady(blob: Blob, durationSeconds: number, thumbnailDataUrl?: string) {
   try {
+    console.log("[SF] handleVideoReady início", { blobSize: blob.size, durationSeconds })
     setProgress(5)
 
     const title = `Gravação ${new Date().toLocaleDateString("pt-BR")}`
     const session = await createUploadSession(title, blob.type)
+    console.log("[SF] sessão de upload criada", { videoId: session.videoId })
 
     setProgress(10)
 
@@ -214,6 +218,7 @@ async function handleVideoReady(blob: Blob, durationSeconds: number, thumbnailDa
         setProgress(10 + Math.floor(pct * 0.85))
       }
     )
+    console.log("[SF] upload ao Drive concluído", { googleDriveFileId })
 
     setProgress(96)
 
@@ -223,6 +228,7 @@ async function handleVideoReady(blob: Blob, durationSeconds: number, thumbnailDa
       durationSeconds,
       thumbnailDataUrl
     )
+    console.log("[SF] completeUpload OK", { shareUrl, publicId })
 
     setProgress(100)
 
@@ -230,6 +236,7 @@ async function handleVideoReady(blob: Blob, durationSeconds: number, thumbnailDa
     setState("done")
     chrome.runtime.sendMessage({ type: "RECORDING_DONE", result: { shareUrl, publicId } }).catch(() => {})
   } catch (err) {
+    console.error("[SF] handleVideoReady FALHOU:", err)
     const msg = String(err)
     lastErrorMessage = msg
     setState("error")
@@ -271,7 +278,15 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 
 chrome.runtime.onMessage.addListener((message: { type: string; blobBase64: string; mimeType: string; durationSeconds: number; thumbnailDataUrl?: string }) => {
   if (message.type === "VIDEO_READY") {
-    if (recordingState !== "uploading") return
+    console.log("[SF] VIDEO_READY recebido", {
+      recordingState,
+      base64Length: message.blobBase64?.length ?? 0,
+      mimeType: message.mimeType,
+    })
+    if (recordingState !== "uploading") {
+      console.warn("[SF] VIDEO_READY DESCARTADO — estado é", recordingState, "(esperado 'uploading'). H4 confirmada.")
+      return
+    }
     const { blobBase64, mimeType, durationSeconds, thumbnailDataUrl } = message
     const binary = atob(blobBase64)
     const bytes = new Uint8Array(binary.length)
