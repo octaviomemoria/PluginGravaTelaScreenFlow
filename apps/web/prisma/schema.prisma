@@ -34,6 +34,9 @@ model User {
   avatarUrl        String?
   plan             Plan     @default(FREE)
   stripeCustomerId String?  @unique
+  isAdmin          Boolean  @default(false)
+  suspended        Boolean  @default(false)
+  lastLoginAt      DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -45,6 +48,7 @@ model User {
 
   videos        Video[]
   monthlyUsages MonthlyUsage[]
+  adminLogs     AdminLog[]
 
   @@map("users")
 }
@@ -89,6 +93,19 @@ model MonthlyUsage {
   @@unique([userId, year, month])
   @@index([userId])
   @@map("monthly_usage")
+}
+
+model AdminLog {
+  id        String   @id @default(cuid())
+  action    String
+  targetId  String?
+  details   String?
+  adminId   String?
+  admin     User?    @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("admin_logs")
 }
 
 model Transcript {

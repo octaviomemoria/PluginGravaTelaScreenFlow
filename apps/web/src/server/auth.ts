@@ -20,7 +20,7 @@ export async function getOrCreateDbUser(supabaseUser: { id: string; email?: stri
 
   return prisma.user.upsert({
     where: { email },
-    update: { name, avatarUrl },
-    create: { id: supabaseUser.id, email, name, avatarUrl },
+    update: { name, avatarUrl, lastLoginAt: new Date() },
+    create: { id: supabaseUser.id, email, name, avatarUrl, lastLoginAt: new Date() },
   })
 }
