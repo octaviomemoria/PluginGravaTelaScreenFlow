@@ -25,20 +25,20 @@ export async function getAdminStats() {
     prisma.video.aggregate({ _sum: { recordingMinutes: true } }),
     prisma.user.count({ where: { plan: "PRO" } }),
     prisma.user.count({ where: { plan: "BUSINESS" } }),
-    // New users grouped by day (last 7 days) — raw query for grouping
-    prisma.$queryRaw<Array<{ day: string; count: bigint }>>`
-      SELECT DATE("createdAt") as day, COUNT(*) as count
+    // New users grouped by day (last 7 days)
+    prisma.$queryRaw<Array<{ day: Date; count: bigint }>>`
+      SELECT "createdAt"::date as day, COUNT(*) as count
       FROM users
       WHERE "createdAt" >= ${sevenDaysAgo}
-      GROUP BY DATE("createdAt")
+      GROUP BY "createdAt"::date
       ORDER BY day ASC
     `,
     // New videos grouped by day (last 30 days)
-    prisma.$queryRaw<Array<{ day: string; count: bigint }>>`
-      SELECT DATE("createdAt") as day, COUNT(*) as count
+    prisma.$queryRaw<Array<{ day: Date; count: bigint }>>`
+      SELECT "createdAt"::date as day, COUNT(*) as count
       FROM videos
       WHERE "createdAt" >= ${thirtyDaysAgo}
-      GROUP BY DATE("createdAt")
+      GROUP BY "createdAt"::date
       ORDER BY day ASC
     `,
     prisma.user.groupBy({
@@ -58,11 +58,11 @@ export async function getAdminStats() {
     proCount,
     businessCount,
     newUsersChart: newUsersRaw.map((r) => ({
-      day: String(r.day),
+      day: r.day instanceof Date ? r.day.toISOString().slice(0, 10) : String(r.day),
       count: Number(r.count),
     })),
     newVideosChart: newVideosRaw.map((r) => ({
-      day: String(r.day),
+      day: r.day instanceof Date ? r.day.toISOString().slice(0, 10) : String(r.day),
       count: Number(r.count),
     })),
     planDistribution: planDistribution.map((p) => ({
