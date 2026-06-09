@@ -183,6 +183,9 @@ async function startRecording(config: RecordingConfig) {
           thumbnailDataUrl,
         })
       }
+      reader.onerror = () => {
+        chrome.runtime.sendMessage({ type: "RECORDING_ERROR", message: "Falha ao processar o vídeo gravado. Tente novamente." })
+      }
       reader.readAsDataURL(blob)
 
       stopStreams()

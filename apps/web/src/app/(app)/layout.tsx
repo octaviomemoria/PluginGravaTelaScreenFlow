@@ -3,6 +3,7 @@ import Link from "next/link"
 import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { getOrCreateDbUser } from "@/server/auth"
 import { LogoutButton } from "@/components/auth/LogoutButton"
+import { ExtensionBridge } from "@/components/ExtensionBridge"
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createSupabaseServerClient()
@@ -18,6 +19,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="min-h-screen flex flex-col">
+      <ExtensionBridge />
       <header className="border-b border-border bg-surface/50 backdrop-blur sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
           <Link href="/dashboard" className="font-bold text-text-primary flex items-center gap-2">

@@ -92,8 +92,8 @@ export default async function BillingPage() {
             name="Pro"
             price={`R$ ${PLAN_PRICES_BRL.PRO.monthly}`}
             features={[
-              "20h de gravação/mês",
-              "3h de transcrição/mês (pt-BR)",
+              "30h de gravação/mês",
+              "5h de transcrição/mês (pt-BR)",
               "Links permanentes",
               "Sem marca d'água",
               "Google Drive do cliente",
@@ -105,8 +105,8 @@ export default async function BillingPage() {
             name="Business"
             price={`R$ ${PLAN_PRICES_BRL.BUSINESS.monthly}`}
             features={[
-              "160h de gravação/mês",
-              "15h de transcrição/mês",
+              "120h de gravação/mês",
+              "10h de transcrição/mês",
               "5 assentos inclusos",
               "Links permanentes",
               "Sem marca d'água",

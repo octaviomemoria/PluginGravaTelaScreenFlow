@@ -13,24 +13,24 @@ export interface PlanLimits {
 
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   FREE: {
-    recordingMinutesPerMonth: 120,       // 2h/mês
-    transcriptionMinutesPerMonth: 0,
-    linkExpiryDays: 14,                  // links expiram em 14 dias
+    recordingMinutesPerMonth: 240,       // 4h/mês
+    transcriptionMinutesPerMonth: 60,    // 1h/mês
+    linkExpiryDays: 7,                   // links expiram em 7 dias
     watermark: true,
     maxActiveVideos: 10,
     seats: 1,
   },
   PRO: {
-    recordingMinutesPerMonth: 1200,      // 20h/mês
-    transcriptionMinutesPerMonth: 180,   // 3h/mês
+    recordingMinutesPerMonth: 1800,      // 30h/mês
+    transcriptionMinutesPerMonth: 300,   // 5h/mês
     linkExpiryDays: null,                // permanente
     watermark: false,
     maxActiveVideos: null,
     seats: 1,
   },
   BUSINESS: {
-    recordingMinutesPerMonth: 9600,      // 160h/mês
-    transcriptionMinutesPerMonth: 900,   // 15h/mês
+    recordingMinutesPerMonth: 7200,      // 120h/mês
+    transcriptionMinutesPerMonth: 600,   // 10h/mês
     linkExpiryDays: null,
     watermark: false,
     maxActiveVideos: null,
@@ -39,14 +39,19 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
 }
 
 export const PLAN_PRICES_BRL = {
-  PRO:      { monthly: 39,  annual: 390  },
-  BUSINESS: { monthly: 119, annual: 1190 },
+  PRO:      { monthly: 49,  annual: 490  },
+  BUSINESS: { monthly: 99,  annual: 990  },
+} as const
+
+// R$0,40 por minuto excedente (PRO e BUSINESS)
+export const OVERAGE_PRICE_BRL = {
+  pricePerMinute: 0.40,
 } as const
 
 export const ADDON_PRICES_BRL = {
-  extraRecordingHour:       5,
-  extraTranscriptionHour:   4,
-  extraSeat:               29,
-  linkExtension:            9,
-  customDomain:            19,
+  extraRecordingHour:       24,  // R$0,40 × 60min
+  extraTranscriptionHour:    4,
+  extraSeat:                29,
+  linkExtension:             9,
+  customDomain:             19,
 } as const

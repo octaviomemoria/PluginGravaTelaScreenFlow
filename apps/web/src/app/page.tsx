@@ -36,15 +36,15 @@ export default function LandingPage() {
 
         <div className="grid grid-cols-3 gap-6 pt-8 text-sm text-text-secondary">
           <div className="space-y-1">
-            <div className="text-2xl font-bold text-text-primary">2h</div>
+            <div className="text-2xl font-bold text-text-primary">4h</div>
             <div>grátis por mês</div>
           </div>
           <div className="space-y-1">
-            <div className="text-2xl font-bold text-text-primary">20h</div>
+            <div className="text-2xl font-bold text-text-primary">30h</div>
             <div>no plano Pro</div>
           </div>
           <div className="space-y-1">
-            <div className="text-2xl font-bold text-text-primary">160h</div>
+            <div className="text-2xl font-bold text-text-primary">120h</div>
             <div>no plano Business</div>
           </div>
         </div>

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createSupabaseServerClient } from "@/lib/supabase/server"
 import { prisma } from "@/lib/prisma"
 import { PLAN_LIMITS } from "@screenflow/shared"
 import type { Plan } from "@screenflow/shared"
@@ -11,17 +10,23 @@ import {
 } from "@/lib/google-drive"
 import { canUserRecord } from "@/server/queries"
 import { nanoid } from "nanoid"
+import { getAuthUserFromRequest } from "@/lib/auth"
+import { getCorsHeaders } from "@/lib/cors"
 
 export const dynamic = "force-dynamic"
 
-export async function POST(req: NextRequest) {
-  const supabase = await createSupabaseServerClient()
-  const {
-    data: { user: authUser },
-  } = await supabase.auth.getUser()
+export async function OPTIONS(request: NextRequest) {
+  const origin = request.headers.get("origin")
+  return new NextResponse(null, { status: 204, headers: getCorsHeaders(origin) })
+}
 
+export async function POST(req: NextRequest) {
+  const origin = req.headers.get("origin")
+  const corsHeaders = getCorsHeaders(origin)
+
+  const authUser = await getAuthUserFromRequest(req)
   if (!authUser) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers: corsHeaders })
   }
 
   const user = await prisma.user.findUnique({
@@ -30,13 +35,13 @@ export async function POST(req: NextRequest) {
   })
 
   if (!user) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 })
+    return NextResponse.json({ error: "User not found" }, { status: 404, headers: corsHeaders })
   }
 
   if (!user.googleDriveConnected || !user.googleRefreshToken) {
     return NextResponse.json(
       { error: "Google Drive não conectado. Conecte seu Drive em Configurações.", limitReached: false, driveMissing: true },
-      { status: 402 }
+      { status: 402, headers: corsHeaders }
     )
   }
 
@@ -49,7 +54,7 @@ export async function POST(req: NextRequest) {
         error: `Limite mensal de gravação atingido (${limits.recordingMinutesPerMonth} min). Faça upgrade para continuar.`,
         limitReached: true,
       },
-      { status: 402 }
+      { status: 402, headers: corsHeaders }
     )
   }
 
@@ -61,7 +66,7 @@ export async function POST(req: NextRequest) {
           error: `Limite de ${limits.maxActiveVideos} vídeos atingido. Delete vídeos antigos ou faça upgrade.`,
           limitReached: true,
         },
-        { status: 402 }
+        { status: 402, headers: corsHeaders }
       )
     }
   }
@@ -91,10 +96,13 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  return NextResponse.json({
-    videoId,
-    uploadUrl,
-    googleAccessToken: accessToken,
-    playbackUrl: getDriveStreamUrl("PENDING"),
-  })
+  return NextResponse.json(
+    {
+      videoId,
+      uploadUrl,
+      googleAccessToken: accessToken,
+      playbackUrl: getDriveStreamUrl("PENDING"),
+    },
+    { headers: corsHeaders }
+  )
 }

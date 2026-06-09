@@ -8,9 +8,12 @@ let isPaused = false
 // Announce the extension is installed on this page
 document.dispatchEvent(new CustomEvent("screenflow-ready"))
 
-// Listen for recording trigger from the dashboard web page
+// Listen for messages from the web app page
 window.addEventListener("message", (e) => {
-  if (e.data?.type === "SCREENFLOW_START_RECORDING") {
+  if (!e.data || typeof e.data !== "object") return
+
+  // Recording trigger from the dashboard
+  if (e.data.type === "SCREENFLOW_START_RECORDING") {
     const config = e.data.config ?? {
       mode: "screen",
       micDeviceId: null,
@@ -18,6 +21,12 @@ window.addEventListener("message", (e) => {
       captureSystemAudio: false,
     }
     chrome.runtime.sendMessage({ type: "START_RECORDING", config })
+  }
+
+  // Auth token bridge: web app posts the Supabase access token so the
+  // extension service worker can use it for Bearer-token authenticated API calls.
+  if (e.data.type === "SCREENFLOW_SET_TOKEN" && typeof e.data.token === "string") {
+    chrome.storage.local.set({ screenflow_token: e.data.token })
   }
 })
 
@@ -146,7 +155,7 @@ function createFloatingBar() {
   let dragging = false
   let dragOffX = 0
   let dragOffY = 0
-  let usedLeftTop = false  // once we start dragging, switch to left/top positioning
+  let usedLeftTop = false
 
   function switchToLeftTop() {
     if (usedLeftTop) return
@@ -159,7 +168,6 @@ function createFloatingBar() {
   }
 
   shadowHost.addEventListener("mousedown", (e) => {
-    // Ignore if clicking a button inside the shadow DOM
     const path = e.composedPath()
     if (path.some((el) => (el as HTMLElement).tagName === "BUTTON")) return
 
@@ -176,7 +184,6 @@ function createFloatingBar() {
     let newLeft = e.clientX - dragOffX
     let newTop = e.clientY - dragOffY
     const rect = shadowHost.getBoundingClientRect()
-    // Keep within viewport
     newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - rect.width))
     newTop = Math.max(0, Math.min(newTop, window.innerHeight - rect.height))
     shadowHost.style.left = `${newLeft}px`
@@ -230,6 +237,12 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage) => {
       if (message.state === "paused") updateFloatingBar(message.elapsed, true)
       if (message.state === "recording") updateFloatingBar(message.elapsed, false)
       if (message.state === "idle" || message.state === "done" || message.state === "error") removeFloatingBar()
+      break
+    case "UPLOAD_PROGRESS":
+      // Floating bar is already hidden during upload — no visual update needed
+      break
+    case "RECORDING_ERROR":
+      removeFloatingBar()
       break
   }
 })

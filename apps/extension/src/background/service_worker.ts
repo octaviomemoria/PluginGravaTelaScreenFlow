@@ -3,6 +3,7 @@ import { checkLimits, createUploadSession, completeUpload, uploadBlobToDrive } f
 
 let recordingState: RecordingState = "idle"
 let startTime: number | null = null
+let accumulatedMs = 0          // ms elapsed before the current timer segment (pause support)
 let timerInterval: ReturnType<typeof setInterval> | null = null
 let currentConfig: RecordingConfig | null = null
 let uploadPercent = 0
@@ -10,6 +11,49 @@ let lastErrorMessage: string | null = null
 let lastResult: { shareUrl: string; publicId: string } | null = null
 
 const OFFSCREEN_URL = chrome.runtime.getURL("src/offscreen/index.html")
+const SW_STATE_KEY = "sw_persisted_state"
+
+// ── State persistence (survives Chrome terminating the service worker) ────────
+
+async function persistState() {
+  await chrome.storage.local.set({
+    [SW_STATE_KEY]: { recordingState, uploadPercent, lastErrorMessage, lastResult },
+  })
+}
+
+async function restoreState() {
+  const data = await chrome.storage.local.get(SW_STATE_KEY)
+  const saved = data[SW_STATE_KEY] as {
+    recordingState?: RecordingState
+    uploadPercent?: number
+    lastErrorMessage?: string | null
+    lastResult?: { shareUrl: string; publicId: string } | null
+  } | undefined
+
+  if (!saved) return
+
+  // If Chrome killed us mid-recording or mid-upload, report the interruption
+  if (
+    saved.recordingState === "recording" ||
+    saved.recordingState === "paused" ||
+    saved.recordingState === "uploading"
+  ) {
+    recordingState = "error"
+    lastErrorMessage = "A gravação foi interrompida inesperadamente. Tente novamente."
+    uploadPercent = 0
+    lastResult = null
+  } else {
+    recordingState = saved.recordingState ?? "idle"
+    uploadPercent = saved.uploadPercent ?? 0
+    lastErrorMessage = saved.lastErrorMessage ?? null
+    lastResult = saved.lastResult ?? null
+  }
+}
+
+// Restore state immediately when the service worker starts
+restoreState()
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function ensureOffscreenDocument() {
   const existing = await chrome.offscreen.hasDocument()
@@ -25,9 +69,14 @@ async function ensureOffscreenDocument() {
 function setState(state: RecordingState) {
   recordingState = state
   if (state !== "error") lastErrorMessage = null
-  if (state === "idle") { uploadPercent = 0; lastResult = null }
-  const elapsed = startTime ? Math.floor((Date.now() - startTime) / 1000) : 0
+  if (state === "idle") {
+    uploadPercent = 0
+    lastResult = null
+    accumulatedMs = 0
+  }
+  const elapsed = getElapsedSeconds()
   chrome.runtime.sendMessage({ type: "STATE_UPDATE", state, elapsed }).catch(() => {})
+  persistState()
 }
 
 function sendToPopup(msg: ExtensionMessage) {
@@ -38,6 +87,7 @@ function setProgress(percent: number) {
   uploadPercent = percent
   sendToPopup({ type: "UPLOAD_PROGRESS", percent })
   broadcastToContent({ type: "UPLOAD_PROGRESS", percent })
+  persistState()
 }
 
 function broadcastToContent(msg: ExtensionMessage) {
@@ -48,11 +98,17 @@ function broadcastToContent(msg: ExtensionMessage) {
   })
 }
 
+// ── Timer (supports pause/resume without resetting elapsed) ──────────────────
+
+function getElapsedSeconds(): number {
+  const current = startTime ? Date.now() - startTime : 0
+  return Math.floor((accumulatedMs + current) / 1000)
+}
+
 function startTimer() {
   startTime = Date.now()
   timerInterval = setInterval(() => {
-    const elapsed = Math.floor((Date.now() - startTime!) / 1000)
-    broadcastToContent({ type: "UPDATE_TIMER", elapsed })
+    broadcastToContent({ type: "UPDATE_TIMER", elapsed: getElapsedSeconds() })
   }, 1000)
 }
 
@@ -61,7 +117,13 @@ function stopTimer() {
     clearInterval(timerInterval)
     timerInterval = null
   }
+  if (startTime) {
+    accumulatedMs += Date.now() - startTime
+    startTime = null
+  }
 }
+
+// ── Recording handlers ────────────────────────────────────────────────────────
 
 async function handleStartRecording(config: RecordingConfig) {
   try {
@@ -88,6 +150,7 @@ async function handleStartRecording(config: RecordingConfig) {
     }
 
     currentConfig = config
+    accumulatedMs = 0  // Reset accumulated time for a fresh recording
     setState("recording")
 
     await ensureOffscreenDocument()
@@ -96,8 +159,15 @@ async function handleStartRecording(config: RecordingConfig) {
     startTimer()
     broadcastToContent({ type: "SHOW_FLOATING_BAR" })
   } catch (err) {
+    const msg = err instanceof Error && (err as any).limitReached
+      ? (err as Error).message
+      : err instanceof Error && (err as any).driveMissing
+        ? "Conecte seu Google Drive em Configurações antes de gravar."
+        : String(err)
+    lastErrorMessage = msg
     setState("error")
-    broadcastToContent({ type: "RECORDING_ERROR", message: String(err) })
+    sendToPopup({ type: "RECORDING_ERROR", message: msg })
+    broadcastToContent({ type: "RECORDING_ERROR", message: msg })
   }
 }
 
@@ -109,14 +179,14 @@ async function handleStopRecording() {
 }
 
 function handlePauseRecording() {
+  stopTimer()  // stopTimer accumulates elapsed into accumulatedMs
   setState("paused")
-  stopTimer()
   chrome.runtime.sendMessage({ type: "PAUSE_RECORDING" })
 }
 
 function handleResumeRecording() {
   setState("recording")
-  startTimer()
+  startTimer()  // picks up from accumulatedMs (pause duration is excluded)
   chrome.runtime.sendMessage({ type: "RESUME_RECORDING" })
 }
 
@@ -168,6 +238,8 @@ async function handleVideoReady(blob: Blob, durationSeconds: number, thumbnailDa
   }
 }
 
+// ── Message listeners ─────────────────────────────────────────────────────────
+
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
   switch (message.type) {
     case "START_RECORDING":
@@ -188,7 +260,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
     case "GET_STATE":
       sendResponse({
         state: recordingState,
-        elapsed: startTime ? Math.floor((Date.now() - startTime) / 1000) : 0,
+        elapsed: getElapsedSeconds(),
         uploadPercent,
         errorMessage: lastErrorMessage,
         result: lastResult,
@@ -199,7 +271,6 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 
 chrome.runtime.onMessage.addListener((message: { type: string; blobBase64: string; mimeType: string; durationSeconds: number; thumbnailDataUrl?: string }) => {
   if (message.type === "VIDEO_READY") {
-    // Only process if we are actually waiting for a video (not cancelled)
     if (recordingState !== "uploading") return
     const { blobBase64, mimeType, durationSeconds, thumbnailDataUrl } = message
     const binary = atob(blobBase64)

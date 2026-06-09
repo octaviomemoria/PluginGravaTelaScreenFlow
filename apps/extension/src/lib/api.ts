@@ -1,15 +1,24 @@
-import { getApiUrl } from "./storage"
+import { getApiUrl, getAuthToken } from "./storage"
 import type { UploadCompleteResponse, PlanLimitsResponse, UploadPrepareResponse } from "@screenflow/shared"
 
 async function apiFetch(path: string, options: RequestInit = {}) {
   const baseUrl = await getApiUrl()
+  const token = await getAuthToken()
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options.headers as Record<string, string> | undefined),
+  }
+
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`
+  }
+
   const res = await fetch(`${baseUrl}${path}`, {
     ...options,
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
+    headers,
+    // No credentials:"include" — Supabase SameSite=Lax cookies don't work
+    // from extension service workers. We use Bearer token auth instead.
   })
 
   if (!res.ok) {
@@ -51,8 +60,7 @@ export async function completeUpload(
 
 /**
  * Upload blob to Google Drive resumable session URL.
- * The uploadUrl comes from /api/uploads/create and the googleAccessToken
- * is included in the Authorization header.
+ * Uses the access token returned by /api/uploads/create.
  */
 export async function uploadBlobToDrive(
   uploadUrl: string,
