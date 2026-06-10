@@ -9,7 +9,25 @@ let combinedStream: MediaStream | null = null
 let startTime: number | null = null
 let thumbnailDataUrl: string | null = null
 let isCancelled = false
-let animHandle: number | null = null
+let animHandle: number | null = null      // setInterval id for the canvas draw loop
+let keepAliveHandle: number | null = null // setInterval id that pings the SW so MV3 doesn't kill it
+
+// MV3 kills an idle service worker after ~30s. While the offscreen document is
+// alive (recording + during the upload), ping the SW every 20s so it stays warm
+// and the recording state / VIDEO_READY are not lost.
+function startKeepAlive() {
+  if (keepAliveHandle !== null) clearInterval(keepAliveHandle)
+  keepAliveHandle = setInterval(() => {
+    chrome.runtime.sendMessage({ type: "KEEPALIVE" }, () => void chrome.runtime.lastError)
+  }, 20000) as unknown as number
+}
+
+function stopKeepAlive() {
+  if (keepAliveHandle !== null) {
+    clearInterval(keepAliveHandle)
+    keepAliveHandle = null
+  }
+}
 
 async function captureScreenThumbnail(stream: MediaStream): Promise<string | undefined> {
   try {
@@ -72,10 +90,11 @@ async function startRecording(config: RecordingConfig) {
       }
 
       if (config.mode === "screen+camera") {
-        // Try to get camera
+        // Try to get camera. Use `ideal` (not `exact`) so a stale/invalid
+        // deviceId falls back to the default camera instead of throwing.
         try {
           cameraStream = await navigator.mediaDevices.getUserMedia({
-            video: config.cameraDeviceId ? { deviceId: { exact: config.cameraDeviceId } } : true,
+            video: config.cameraDeviceId ? { deviceId: { ideal: config.cameraDeviceId } } : true,
           })
           console.log("[SF] câmera adquirida", {
             videoTracks: cameraStream.getVideoTracks().length,
@@ -84,6 +103,12 @@ async function startRecording(config: RecordingConfig) {
         } catch (camErr) {
           cameraStream = null
           console.error("[SF] FALHA ao adquirir câmera (getUserMedia)", camErr)
+          stopStreams() // release the screen/mic streams already acquired
+          chrome.runtime.sendMessage({
+            type: "RECORDING_ERROR",
+            message: "Não foi possível acessar a câmera. Verifique as permissões e tente novamente.",
+          })
+          return
         }
       }
 
@@ -154,9 +179,11 @@ async function startRecording(config: RecordingConfig) {
           if (frameCount % 30 === 0) {
             console.log(`[SF] draw loop ativo — ${frameCount} frames desenhados`)
           }
-          animHandle = requestAnimationFrame(draw)
         }
+        // Use setInterval (not requestAnimationFrame): rAF is throttled/suspended
+        // in a non-rendered offscreen document, which left the camera bubble frozen.
         draw()
+        animHandle = setInterval(draw, 1000 / 30) as unknown as number
 
         const canvasStream = compositeCanvas.captureStream(30)
         console.log("[SF] canvasStream criado", {
@@ -191,7 +218,11 @@ async function startRecording(config: RecordingConfig) {
       audioTracks: combinedStream!.getAudioTracks().length,
     })
 
-    mediaRecorder = new MediaRecorder(combinedStream, { mimeType })
+    // Cap the bitrate so the resulting blob stays manageable. The canvas-composited
+    // screen+camera stream would otherwise produce a very large file, which both
+    // bloated the VIDEO_READY message and lengthened the window in which the MV3
+    // service worker could be killed mid-finalize.
+    mediaRecorder = new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: 2_500_000 })
 
     let totalBytes = 0
     mediaRecorder.ondataavailable = (e) => {
@@ -209,12 +240,13 @@ async function startRecording(config: RecordingConfig) {
       })
       // Stop canvas compositing
       if (animHandle !== null) {
-        cancelAnimationFrame(animHandle)
+        clearInterval(animHandle)
         animHandle = null
       }
 
       if (isCancelled) {
         // Don't upload — just clean up
+        stopKeepAlive()
         stopStreams()
         return
       }
@@ -258,6 +290,7 @@ async function startRecording(config: RecordingConfig) {
     }
 
     mediaRecorder.start(1000)
+    startKeepAlive() // keep the MV3 service worker warm through recording + upload
     console.log("[SF] mediaRecorder.start()", { state: mediaRecorder.state, mimeType })
   } catch (err) {
     console.error("[SF] EXCEÇÃO em startRecording:", err)
@@ -284,8 +317,9 @@ function resumeRecording() {
 
 function cancelRecording() {
   isCancelled = true
+  stopKeepAlive()
   if (animHandle !== null) {
-    cancelAnimationFrame(animHandle)
+    clearInterval(animHandle)
     animHandle = null
   }
   if (mediaRecorder && mediaRecorder.state !== "inactive") {
@@ -299,6 +333,7 @@ function stopStreams() {
   displayStream?.getTracks().forEach((t) => t.stop())
   cameraStream?.getTracks().forEach((t) => t.stop())
   micStream?.getTracks().forEach((t) => t.stop())
+  combinedStream?.getTracks().forEach((t) => t.stop()) // includes the canvas captureStream track
   displayStream = null
   cameraStream = null
   micStream = null

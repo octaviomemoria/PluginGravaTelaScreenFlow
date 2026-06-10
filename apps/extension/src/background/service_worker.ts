@@ -67,6 +67,16 @@ async function ensureOffscreenDocument() {
   }
 }
 
+async function closeOffscreenDocument() {
+  try {
+    if (await chrome.offscreen.hasDocument()) {
+      await chrome.offscreen.closeDocument()
+    }
+  } catch {
+    // ignore — document may already be gone
+  }
+}
+
 function setState(state: RecordingState) {
   recordingState = state
   if (state !== "error") lastErrorMessage = null
@@ -197,6 +207,7 @@ function handleCancelRecording() {
   setState("idle")
   broadcastToContent({ type: "HIDE_FLOATING_BAR" })
   chrome.runtime.sendMessage({ type: "CANCEL_RECORDING" })
+  closeOffscreenDocument()
 }
 
 async function handleVideoReady(blob: Blob, durationSeconds: number, thumbnailDataUrl?: string) {
@@ -235,6 +246,7 @@ async function handleVideoReady(blob: Blob, durationSeconds: number, thumbnailDa
     lastResult = { shareUrl, publicId }
     setState("done")
     chrome.runtime.sendMessage({ type: "RECORDING_DONE", result: { shareUrl, publicId } }).catch(() => {})
+    closeOffscreenDocument() // upload finished — tear down offscreen (stops keepalive ping)
   } catch (err) {
     console.error("[SF] handleVideoReady FALHOU:", err)
     const msg = String(err)
@@ -242,12 +254,13 @@ async function handleVideoReady(blob: Blob, durationSeconds: number, thumbnailDa
     setState("error")
     sendToPopup({ type: "RECORDING_ERROR", message: msg })
     broadcastToContent({ type: "RECORDING_ERROR", message: msg })
+    closeOffscreenDocument()
   }
 }
 
 // ── Message listeners ─────────────────────────────────────────────────────────
 
-chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
   switch (message.type) {
     case "START_RECORDING":
       if (recordingState === "idle") handleStartRecording(message.config)
@@ -263,6 +276,21 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
       break
     case "CANCEL_RECORDING":
       handleCancelRecording()
+      break
+    case "KEEPALIVE":
+      // No-op: simply receiving this message resets the MV3 idle timer,
+      // keeping the service worker alive through recording + upload.
+      break
+    case "RECORDING_ERROR":
+      // Error raised inside the offscreen document (e.g. camera acquisition failed).
+      // Reset SW state so the user isn't stuck in "recording". Guard against the
+      // SW's own broadcasts by only acting on messages from the offscreen document.
+      if (sender.url?.includes("offscreen") && recordingState !== "error") {
+        lastErrorMessage = message.message
+        setState("error")
+        broadcastToContent({ type: "HIDE_FLOATING_BAR" })
+        closeOffscreenDocument()
+      }
       break
     case "GET_STATE":
       sendResponse({
@@ -283,9 +311,15 @@ chrome.runtime.onMessage.addListener((message: { type: string; blobBase64: strin
       base64Length: message.blobBase64?.length ?? 0,
       mimeType: message.mimeType,
     })
-    if (recordingState !== "uploading") {
-      console.warn("[SF] VIDEO_READY DESCARTADO — estado é", recordingState, "(esperado 'uploading'). H4 confirmada.")
+    // Accept the video when uploading, OR recover it if the SW was killed mid-upload
+    // and restored to "error". Only a stale "done"/"idle" is treated as a duplicate.
+    if (recordingState !== "uploading" && recordingState !== "error") {
+      console.warn("[SF] VIDEO_READY ignorado — estado é", recordingState, "(nem 'uploading' nem 'error')")
       return
+    }
+    if (recordingState === "error") {
+      console.log("[SF] VIDEO_READY recuperado de estado 'error' (SW havia sido reiniciado)")
+      setState("uploading")
     }
     const { blobBase64, mimeType, durationSeconds, thumbnailDataUrl } = message
     const binary = atob(blobBase64)

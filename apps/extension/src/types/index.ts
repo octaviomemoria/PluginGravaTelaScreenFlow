@@ -25,6 +25,7 @@ export type ExtensionMessage =
   | { type: "RECORDING_DONE"; result: RecordingResult }
   | { type: "RECORDING_ERROR"; message: string }
   | { type: "OFFSCREEN_READY" }
+  | { type: "KEEPALIVE" }
   | { type: "VIDEO_CHUNK"; chunk: ArrayBuffer }
   | { type: "SHOW_FLOATING_BAR" }
   | { type: "HIDE_FLOATING_BAR" }
