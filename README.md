@@ -17,13 +17,14 @@ Gravador de tela estilo Loom com extensão Chrome, SaaS web app, transcrição p
 5. [Planos e Limites](#planos-e-limites)
 6. [API Reference](#api-reference)
 7. [Extensão Chrome](#extensão-chrome)
-8. [Área Administrativa](#área-administrativa)
-9. [Variáveis de Ambiente](#variáveis-de-ambiente)
-10. [Setup Local](#setup-local)
-11. [Deploy](#deploy)
-12. [Serviços Externos](#serviços-externos)
-13. [Fluxos Principais](#fluxos-principais)
-14. [Roadmap](#roadmap)
+8. [Notas Técnicas da Extensão](#notas-técnicas-da-extensão)
+9. [Área Administrativa](#área-administrativa)
+10. [Variáveis de Ambiente](#variáveis-de-ambiente)
+11. [Setup Local](#setup-local)
+12. [Deploy](#deploy)
+13. [Serviços Externos](#serviços-externos)
+14. [Fluxos Principais](#fluxos-principais)
+15. [Roadmap](#roadmap)
 
 ---
 
@@ -49,8 +50,9 @@ O ScreenFlow Recorder permite que usuários gravem sua tela e reuniões diretame
 | Camada | Tecnologia |
 |---|---|
 | Monorepo | pnpm workspaces + Turborepo |
-| Web App | Next.js 15 App Router, TypeScript, Tailwind CSS, shadcn/ui |
-| Extensão | Chrome MV3, React 18, TypeScript, Vite, @crxjs/vite-plugin |
+| Web App | Next.js 15 App Router, TypeScript, Tailwind CSS (componentes custom, sem shadcn/ui), lucide-react |
+| Gráficos (admin) | Recharts |
+| Extensão | Chrome MV3, React 19, TypeScript, Vite, @crxjs/vite-plugin |
 | Autenticação | Supabase Auth (email/senha) |
 | Banco de dados | Supabase Postgres + Prisma ORM v6 |
 | Storage de vídeo | Google Drive (OAuth por usuário, upload resumable) |
@@ -122,7 +124,11 @@ screenflow-recorder/
 │   │   │   │   ├── supabase/         # Clientes server e client
 │   │   │   │   ├── prisma.ts         # Singleton Prisma Client
 │   │   │   │   ├── google-drive.ts   # OAuth, upload, stream Drive
-│   │   │   │   └── stripe.ts         # Instância Stripe
+│   │   │   │   ├── stripe.ts         # Instância Stripe
+│   │   │   │   ├── auth.ts           # getAuthUserFromRequest (cookie + Bearer)
+│   │   │   │   └── cors.ts           # getCorsHeaders (chrome-extension://)
+│   │   │   ├── components/
+│   │   │   │   └── ExtensionBridge.tsx # Envia token Supabase para extensão
 │   │   │   └── server/
 │   │   │       ├── auth.ts           # getOrCreateDbUser
 │   │   │       └── queries.ts        # Queries Prisma reutilizáveis
@@ -253,18 +259,18 @@ Definidos em `packages/shared/src/types/plan.ts`.
 | PRO | R$49 | R$490 |
 | BUSINESS | R$99 | R$990 |
 
-**Add-ons disponíveis (previstos):**
-- Hora extra de gravação: R$24
-- Hora extra de transcrição: R$4
-- Assento extra: R$29
-- Extensão de link: R$9
-- Domínio customizado: R$19
+**Overage (PRO e BUSINESS):**
+- Minuto extra de gravação: R$0,40 (implementação futura — constante `OVERAGE_PRICE_BRL` já definida em `packages/shared/src/types/plan.ts`)
 
 ---
 
 ## API Reference
 
-Todas as rotas protegidas exigem sessão Supabase válida (cookie `sb-*`).  
+Rotas protegidas aceitam autenticação via **cookie Supabase** (web app) **ou Bearer token** (extensão Chrome):
+```
+Authorization: Bearer <supabase_access_token>
+```
+O token é obtido pelo `ExtensionBridge.tsx` no web app e armazenado em `chrome.storage.local`.  
 Rotas `/api/admin/*` exigem adicionalmente `user.isAdmin === true`.
 
 ### Uploads
@@ -451,6 +457,38 @@ pnpm build                    # Gera apps/extension/dist/
 
 ---
 
+## Notas Técnicas da Extensão
+
+Decisões e armadilhas específicas do ambiente Manifest V3 que já custaram bugs reais. **Leia antes de mexer no fluxo de gravação/upload.**
+
+### Service worker MV3 é efêmero → keepalive obrigatório
+
+O Chrome encerra o service worker após ~30s ocioso. Como quem grava é o **documento offscreen**, o SW fica ocioso durante a gravação e o upload, e era morto no meio do processo. Sintomas observados: **relógio congelado** durante a gravação e gravações que travavam em **"0% Enviando vídeo..."** (o vídeo pronto era descartado).
+
+**Solução:** o offscreen envia uma mensagem `KEEPALIVE` ao SW a cada 20s (`startKeepAlive()` em `recorder.ts`). Receber qualquer mensagem reseta o timer de inatividade do SW, mantendo-o vivo durante gravação + upload. O SW fecha o offscreen em `done`/`error`/`cancel`, o que encerra o ping.
+
+### `requestAnimationFrame` não roda no offscreen → usar `setInterval`
+
+O compositing tela+câmera desenha num `<canvas>`. `requestAnimationFrame` é suspenso em um documento offscreen não-renderizado, o que deixava a **bolha da câmera congelada**. O loop de desenho usa `setInterval(draw, 1000/30)` em vez de rAF.
+
+### Aquisição de câmera: `ideal`, não `exact`
+
+`getUserMedia({ video: { deviceId: { exact } } })` lança erro se o `deviceId` salvo estiver obsoleto, e o código caía silenciosamente no ramo "só tela" (gravava sem câmera). Agora usa `{ ideal: deviceId }` (faz fallback para a câmera padrão) e, se a câmera realmente falhar, **aborta com erro claro** em vez de gravar só a tela.
+
+### Tamanho do blob e entrega do vídeo
+
+- O `MediaRecorder` usa `videoBitsPerSecond: 2_500_000` para manter o arquivo gerenciável (o stream compositado em 1080p ficava grande demais).
+- O vídeo é enviado do offscreen ao SW como **base64 em uma única mensagem** (`VIDEO_READY`). É frágil para gravações muito longas — o tipo `VIDEO_CHUNK` já existe em `types/index.ts` para uma futura migração para transferência em chunks ou upload direto pelo offscreen.
+- O handler de `VIDEO_READY` no SW aceita o vídeo mesmo se o estado foi restaurado como `error` (recuperação defensiva caso o SW tenha reiniciado).
+
+### Autenticação cookie vs. Bearer
+
+Cookies Supabase são `SameSite=Lax` e **não** funcionam em chamadas cross-origin a partir do service worker da extensão. Por isso a extensão usa **Bearer token**: o `ExtensionBridge.tsx` no web app envia o `access_token` via `postMessage` → content script salva em `chrome.storage.local` → SW envia como `Authorization: Bearer`. Não reintroduza `credentials: "include"` em `apps/extension/src/lib/api.ts`.
+
+> **Logs de diagnóstico:** o caminho de gravação está instrumentado com `console.log("[SF] ...")` no offscreen e no service worker. Úteis para depurar; podem ser removidos quando o fluxo estiver estável.
+
+---
+
 ## Área Administrativa
 
 Acessível em `/admin` — restrita ao usuário com `isAdmin = true` no banco (octacm@gmail.com).
@@ -555,12 +593,14 @@ cp apps/web/prisma/.env.example apps/web/prisma/.env
 
 ```bash
 cd apps/web
-pnpm prisma migrate dev      # Aplica migrations
+pnpm prisma db push          # Sincroniza o schema com o Supabase (este projeto não usa migrations versionadas)
 pnpm prisma generate         # Gera Prisma Client
-pnpm prisma db seed          # (se existir) Seed inicial
+pnpm prisma db seed          # Marca octacm@gmail.com como isAdmin (apps/web/prisma/seed.ts)
 ```
 
-Para marcar o admin manualmente:
+> **Nota:** o banco foi criado direto no Supabase, então `prisma migrate dev` acusa drift. Use `prisma db push` para aplicar mudanças de schema. O seed só funciona **após** o admin ter feito login ao menos uma vez (o registro precisa existir na tabela `users`).
+
+Alternativa — marcar o admin manualmente via SQL:
 ```sql
 UPDATE users SET "isAdmin" = true WHERE email = 'octacm@gmail.com';
 ```
@@ -622,7 +662,7 @@ Eventos: checkout.session.completed, customer.subscription.updated, customer.sub
    https://plugin-grava-tela-screen-flow-exten.vercel.app/api/auth/google/callback
    http://localhost:3000/api/auth/google/callback
    ```
-3. OAuth consent screen → adicionar `octacm@gmail.com` como test user (enquanto em modo Testing)
+3. O OAuth consent screen já está em modo **Produção** — qualquer conta Google pode conectar o Drive sem restrições
 
 ### Extensão Chrome
 
@@ -778,4 +818,4 @@ node apps/extension/generate-icons.js
 
 ---
 
-*Documentação atualizada em junho/2026. Admin: octacm@gmail.com*
+*Documentação atualizada em 18 de junho/2026. Admin: octacm@gmail.com*
