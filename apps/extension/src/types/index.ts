@@ -1,4 +1,4 @@
-export type RecordingMode = "screen" | "tab" | "camera" | "screen+camera"
+export type RecordingMode = "screen" | "tab" | "camera" | "screen+camera" | "audio"
 
 export type RecordingState = "idle" | "countdown" | "recording" | "paused" | "uploading" | "done" | "error"
 
@@ -26,7 +26,9 @@ export type ExtensionMessage =
   | { type: "RECORDING_ERROR"; message: string }
   | { type: "OFFSCREEN_READY" }
   | { type: "KEEPALIVE" }
-  | { type: "VIDEO_CHUNK"; chunk: ArrayBuffer }
+  | { type: "OFFSCREEN_UPLOAD_PROGRESS"; percent: number }
+  | { type: "OFFSCREEN_UPLOAD_DONE"; result: RecordingResult }
+  | { type: "OFFSCREEN_UPLOAD_ERROR"; message: string }
   | { type: "SHOW_FLOATING_BAR" }
   | { type: "HIDE_FLOATING_BAR" }
   | { type: "UPDATE_TIMER"; elapsed: number }

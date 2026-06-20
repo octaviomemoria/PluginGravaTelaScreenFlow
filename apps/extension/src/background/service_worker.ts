@@ -1,5 +1,5 @@
 import type { ExtensionMessage, RecordingConfig, RecordingState } from "../types"
-import { checkLimits, createUploadSession, completeUpload, uploadBlobToDrive } from "../lib/api"
+import { checkLimits } from "../lib/api"
 
 let recordingState: RecordingState = "idle"
 let startTime: number | null = null
@@ -38,7 +38,7 @@ async function restoreState() {
     saved.recordingState === "paused" ||
     saved.recordingState === "uploading"
   ) {
-    console.warn("[SF] restoreState: SW foi reiniciado durante", saved.recordingState, "→ marcando como erro (pode descartar VIDEO_READY pendente)")
+    console.warn("[SF] restoreState: SW reiniciado durante", saved.recordingState, "→ marcando como erro")
     recordingState = "error"
     lastErrorMessage = "A gravação foi interrompida inesperadamente. Tente novamente."
     uploadPercent = 0
@@ -183,7 +183,6 @@ async function handleStartRecording(config: RecordingConfig) {
 }
 
 async function handleStopRecording() {
-  console.log("[SF] handleStopRecording: state→uploading, repassando STOP ao offscreen")
   stopTimer()
   setState("uploading")
   broadcastToContent({ type: "HIDE_FLOATING_BAR" })
@@ -210,52 +209,24 @@ function handleCancelRecording() {
   closeOffscreenDocument()
 }
 
-async function handleVideoReady(blob: Blob, durationSeconds: number, thumbnailDataUrl?: string) {
-  try {
-    console.log("[SF] handleVideoReady início", { blobSize: blob.size, durationSeconds })
-    setProgress(5)
+// O upload acontece DENTRO do documento offscreen (ver recorder.ts). O service
+// worker só reage aos resultados via OFFSCREEN_UPLOAD_PROGRESS/DONE/ERROR.
 
-    const title = `Gravação ${new Date().toLocaleDateString("pt-BR")}`
-    const session = await createUploadSession(title, blob.type)
-    console.log("[SF] sessão de upload criada", { videoId: session.videoId })
+function handleUploadDone(shareUrl: string, publicId: string) {
+  setProgress(100)
+  lastResult = { shareUrl, publicId }
+  setState("done")
+  chrome.runtime.sendMessage({ type: "RECORDING_DONE", result: { shareUrl, publicId } }).catch(() => {})
+  closeOffscreenDocument()
+}
 
-    setProgress(10)
-
-    const googleDriveFileId = await uploadBlobToDrive(
-      session.uploadUrl,
-      session.googleAccessToken,
-      blob,
-      (pct) => {
-        setProgress(10 + Math.floor(pct * 0.85))
-      }
-    )
-    console.log("[SF] upload ao Drive concluído", { googleDriveFileId })
-
-    setProgress(96)
-
-    const { shareUrl, publicId } = await completeUpload(
-      session.videoId,
-      googleDriveFileId,
-      durationSeconds,
-      thumbnailDataUrl
-    )
-    console.log("[SF] completeUpload OK", { shareUrl, publicId })
-
-    setProgress(100)
-
-    lastResult = { shareUrl, publicId }
-    setState("done")
-    chrome.runtime.sendMessage({ type: "RECORDING_DONE", result: { shareUrl, publicId } }).catch(() => {})
-    closeOffscreenDocument() // upload finished — tear down offscreen (stops keepalive ping)
-  } catch (err) {
-    console.error("[SF] handleVideoReady FALHOU:", err)
-    const msg = String(err)
-    lastErrorMessage = msg
-    setState("error")
-    sendToPopup({ type: "RECORDING_ERROR", message: msg })
-    broadcastToContent({ type: "RECORDING_ERROR", message: msg })
-    closeOffscreenDocument()
-  }
+function handleUploadError(message: string) {
+  console.error("[SF] OFFSCREEN_UPLOAD_ERROR:", message)
+  lastErrorMessage = message
+  setState("error")
+  sendToPopup({ type: "RECORDING_ERROR", message })
+  broadcastToContent({ type: "RECORDING_ERROR", message })
+  closeOffscreenDocument()
 }
 
 // ── Message listeners ─────────────────────────────────────────────────────────
@@ -276,6 +247,16 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       break
     case "CANCEL_RECORDING":
       handleCancelRecording()
+      break
+    case "OFFSCREEN_UPLOAD_PROGRESS":
+      setProgress(message.percent)
+      break
+    case "OFFSCREEN_UPLOAD_DONE":
+      // State-agnostic: apply even if the SW was restarted and restored to "error".
+      handleUploadDone(message.result.shareUrl, message.result.publicId)
+      break
+    case "OFFSCREEN_UPLOAD_ERROR":
+      handleUploadError(message.message)
       break
     case "KEEPALIVE":
       // No-op: simply receiving this message resets the MV3 idle timer,
@@ -301,32 +282,6 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         result: lastResult,
       })
       return true
-  }
-})
-
-chrome.runtime.onMessage.addListener((message: { type: string; blobBase64: string; mimeType: string; durationSeconds: number; thumbnailDataUrl?: string }) => {
-  if (message.type === "VIDEO_READY") {
-    console.log("[SF] VIDEO_READY recebido", {
-      recordingState,
-      base64Length: message.blobBase64?.length ?? 0,
-      mimeType: message.mimeType,
-    })
-    // Accept the video when uploading, OR recover it if the SW was killed mid-upload
-    // and restored to "error". Only a stale "done"/"idle" is treated as a duplicate.
-    if (recordingState !== "uploading" && recordingState !== "error") {
-      console.warn("[SF] VIDEO_READY ignorado — estado é", recordingState, "(nem 'uploading' nem 'error')")
-      return
-    }
-    if (recordingState === "error") {
-      console.log("[SF] VIDEO_READY recuperado de estado 'error' (SW havia sido reiniciado)")
-      setState("uploading")
-    }
-    const { blobBase64, mimeType, durationSeconds, thumbnailDataUrl } = message
-    const binary = atob(blobBase64)
-    const bytes = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)!
-    const blob = new Blob([bytes], { type: mimeType })
-    handleVideoReady(blob, durationSeconds, thumbnailDataUrl)
   }
 })
 

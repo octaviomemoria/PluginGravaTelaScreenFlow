@@ -34,6 +34,8 @@ export default async function PublicVideoPage({ params }: Props) {
     ? getDriveStreamUrl(video.googleDriveFileId)
     : video.playbackUrl ?? null
 
+  const isAudio = video.mimeType?.startsWith("audio/") ?? false
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b border-border px-4 h-12 flex items-center">
@@ -44,18 +46,27 @@ export default async function PublicVideoPage({ params }: Props) {
       </header>
 
       <main className="flex-1 max-w-4xl mx-auto w-full px-4 py-8 space-y-6">
-        <div className="relative aspect-video bg-black rounded-xl overflow-hidden">
+        <div className={`relative bg-black rounded-xl overflow-hidden ${isAudio ? "p-8" : "aspect-video"}`}>
           {videoSrc ? (
-            <video
-              src={videoSrc}
-              controls
-              autoPlay={false}
-              className="w-full h-full"
-              playsInline
-            />
+            isAudio ? (
+              <div className="flex flex-col items-center justify-center gap-4 py-6">
+                <div className="w-16 h-16 bg-accent/15 rounded-full flex items-center justify-center">
+                  <span className="text-3xl">🎙️</span>
+                </div>
+                <audio src={videoSrc} controls autoPlay={false} className="w-full max-w-md" />
+              </div>
+            ) : (
+              <video
+                src={videoSrc}
+                controls
+                autoPlay={false}
+                className="w-full h-full"
+                playsInline
+              />
+            )
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-text-secondary">
-              Processando vídeo...
+            <div className="w-full h-full flex items-center justify-center text-text-secondary py-12">
+              Processando gravação...
             </div>
           )}
 

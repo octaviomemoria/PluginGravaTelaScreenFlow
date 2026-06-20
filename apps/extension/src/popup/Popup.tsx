@@ -7,6 +7,7 @@ const MODE_OPTIONS: { value: RecordingMode; label: string; icon: string; desc: s
   { value: "tab", label: "Aba atual", icon: "📄", desc: "Só esta aba" },
   { value: "screen+camera", label: "Tela + Câmera", icon: "🎥", desc: "Com webcam" },
   { value: "camera", label: "Câmera", icon: "📷", desc: "Só câmera" },
+  { value: "audio", label: "Apenas áudio", icon: "🎙️", desc: "Só microfone" },
 ]
 
 export function Popup() {
@@ -204,7 +205,7 @@ export function Popup() {
           </span>
         </div>
         <div className="text-center">
-          <p className="font-semibold">Enviando vídeo...</p>
+          <p className="font-semibold">Enviando gravação...</p>
           <p className="text-text-secondary text-xs mt-1">Aguarde, seu link será gerado em instantes</p>
         </div>
       </div>
@@ -341,15 +342,17 @@ export function Popup() {
           </div>
         )}
 
-        <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={captureSystemAudio}
-            onChange={(e) => setCaptureSystemAudio(e.target.checked)}
-            className="accent-accent"
-          />
-          Capturar áudio do sistema
-        </label>
+        {mode !== "audio" && mode !== "camera" && (
+          <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={captureSystemAudio}
+              onChange={(e) => setCaptureSystemAudio(e.target.checked)}
+              className="accent-accent"
+            />
+            Capturar áudio do sistema
+          </label>
+        )}
       </div>
 
       {/* Start button */}

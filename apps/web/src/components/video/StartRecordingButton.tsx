@@ -20,12 +20,12 @@ export function StartRecordingButton() {
     }
   }, [])
 
-  function startRecording() {
+  function startRecording(mode: "screen" | "audio" = "screen") {
     window.postMessage(
       {
         type: "SCREENFLOW_START_RECORDING",
         config: {
-          mode: "screen",
+          mode,
           micDeviceId: null,
           cameraDeviceId: null,
           captureSystemAudio: false,
@@ -54,12 +54,21 @@ export function StartRecordingButton() {
   }
 
   return (
-    <button
-      onClick={startRecording}
-      className="inline-flex items-center gap-2 px-4 py-2.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm font-bold transition-colors shadow-sm"
-    >
-      <span className="w-2 h-2 rounded-full bg-white/70" />
-      Gravar agora
-    </button>
+    <div className="inline-flex items-center gap-2">
+      <button
+        onClick={() => startRecording("screen")}
+        className="inline-flex items-center gap-2 px-4 py-2.5 bg-accent hover:bg-accent-hover text-white rounded-xl text-sm font-bold transition-colors shadow-sm"
+      >
+        <span className="w-2 h-2 rounded-full bg-white/70" />
+        Gravar agora
+      </button>
+      <button
+        onClick={() => startRecording("audio")}
+        className="inline-flex items-center gap-2 px-4 py-2.5 bg-surface border border-border hover:border-accent/50 text-text-primary rounded-xl text-sm font-semibold transition-colors"
+        title="Gravar apenas áudio do microfone"
+      >
+        🎙️ Gravar áudio
+      </button>
+    </div>
   )
 }

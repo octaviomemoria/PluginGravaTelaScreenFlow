@@ -13,6 +13,7 @@ interface VideoCardProps {
     thumbnailUrl: string | null
     durationSeconds: number | null
     visibility: string
+    mimeType?: string | null
     createdAt: Date
   }
 }
@@ -35,10 +36,18 @@ export function VideoCard({ video }: VideoCardProps) {
     window.location.reload()
   }
 
+  const isAudio = video.mimeType?.startsWith("audio/")
+
   return (
     <Link href={`/video/${video.id}`} className="group block bg-surface border border-border rounded-xl overflow-hidden hover:border-accent/50 transition-colors">
       <div className="relative aspect-video bg-background">
-        {video.thumbnailUrl ? (
+        {isAudio ? (
+          <div className="w-full h-full flex items-center justify-center">
+            <div className="w-10 h-10 bg-accent/10 rounded-full flex items-center justify-center">
+              <span className="text-accent text-xl">🎙️</span>
+            </div>
+          </div>
+        ) : video.thumbnailUrl ? (
           <img src={video.thumbnailUrl} alt={video.title} className="w-full h-full object-cover" />
         ) : (
           <div className="w-full h-full flex items-center justify-center">

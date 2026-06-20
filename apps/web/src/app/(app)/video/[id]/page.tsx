@@ -25,15 +25,16 @@ export default async function VideoPage({ params }: Props) {
     : video.playbackUrl ?? null
 
   const shareUrl = `${process.env.NEXT_PUBLIC_APP_URL}/p/${video.publicId}`
+  const isAudio = video.mimeType?.startsWith("audio/") ?? false
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <div className="aspect-video bg-black rounded-xl overflow-hidden">
+      <div className={`bg-black rounded-xl overflow-hidden ${isAudio ? "" : "aspect-video"}`}>
         {videoSrc ? (
-          <VideoPlayer url={videoSrc} />
+          <VideoPlayer url={videoSrc} mimeType={video.mimeType} />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-text-secondary">
-            <p>Processando vídeo...</p>
+          <div className="w-full h-full flex items-center justify-center text-text-secondary py-12">
+            <p>Processando gravação...</p>
           </div>
         )}
       </div>
