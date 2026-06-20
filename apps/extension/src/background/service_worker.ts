@@ -164,6 +164,9 @@ async function handleStartRecording(config: RecordingConfig) {
     accumulatedMs = 0  // Reset accumulated time for a fresh recording
     setState("recording")
 
+    // Close any lingering offscreen document from a previous (possibly stuck)
+    // session so each recording starts from a clean slate.
+    await closeOffscreenDocument()
     await ensureOffscreenDocument()
     chrome.runtime.sendMessage({ type: "START_RECORDING", config })
 
@@ -234,7 +237,11 @@ function handleUploadError(message: string) {
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
   switch (message.type) {
     case "START_RECORDING":
-      if (recordingState === "idle") handleStartRecording(message.config)
+      // Allow starting from any non-active state (idle/error/done/countdown) so a
+      // stale "error"/"done" from a previous session never blocks a new recording.
+      if (recordingState !== "recording" && recordingState !== "paused" && recordingState !== "uploading") {
+        handleStartRecording(message.config)
+      }
       break
     case "STOP_RECORDING":
       if (recordingState === "recording" || recordingState === "paused") handleStopRecording()

@@ -214,50 +214,63 @@ async function startRecording(config: RecordingConfig) {
 
       const blob = new Blob(recordedChunks, { type: mimeType })
       const durationSeconds = startTime ? (Date.now() - startTime) / 1000 : 0
+      console.log("[SF] onstop: blob pronto", { size: blob.size, type: blob.type, durationSeconds })
 
       // Free the capture streams now — the blob is already in memory.
       stopStreams()
 
+      const sendToSW = (msg: object) =>
+        chrome.runtime.sendMessage(msg, () => void chrome.runtime.lastError)
+
+      // Signal immediately so the popup shows movement past the stop and the SW
+      // stays warm even before the Drive upload reports its first byte.
+      sendToSW({ type: "OFFSCREEN_UPLOAD_PROGRESS", percent: 2 })
+
       // Upload directly from the offscreen document. This avoids serializing a
       // huge base64 blob through a single chrome.runtime message AND removes the
       // dependency on the MV3 service worker staying alive during the upload.
+      // Wrapped in an overall timeout so a stalled request never hangs silently.
       try {
         const isAudio = mimeType.startsWith("audio/")
         const title = isAudio
           ? `Áudio ${new Date().toLocaleDateString("pt-BR")}`
           : `Gravação ${new Date().toLocaleDateString("pt-BR")}`
 
-        const session = await createUploadSession(title, blob.type)
+        const withTimeout = <T>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+          Promise.race([
+            p,
+            new Promise<T>((_, reject) =>
+              setTimeout(() => reject(new Error(`Tempo esgotado em ${label} (${ms / 1000}s)`)), ms)
+            ),
+          ])
 
-        const googleDriveFileId = await uploadBlobToDrive(
-          session.uploadUrl,
-          session.googleAccessToken,
-          blob,
-          (pct) => {
-            chrome.runtime.sendMessage(
-              { type: "OFFSCREEN_UPLOAD_PROGRESS", percent: 5 + Math.floor(pct * 0.9) },
-              () => void chrome.runtime.lastError
-            )
-          }
-        )
+        console.log("[SF] upload: criando sessão...")
+        const session = await withTimeout(createUploadSession(title, blob.type), 30000, "criar sessão")
+        console.log("[SF] upload: sessão criada", { videoId: session.videoId })
 
-        const { shareUrl, publicId } = await completeUpload(
-          session.videoId,
-          googleDriveFileId,
-          durationSeconds,
-          thumbnailDataUrl ?? undefined
+        const googleDriveFileId = await withTimeout(
+          uploadBlobToDrive(
+            session.uploadUrl,
+            session.googleAccessToken,
+            blob,
+            (pct) => sendToSW({ type: "OFFSCREEN_UPLOAD_PROGRESS", percent: 5 + Math.floor(pct * 0.9) })
+          ),
+          180000,
+          "enviar ao Drive"
         )
+        console.log("[SF] upload: Drive OK", { googleDriveFileId })
 
-        chrome.runtime.sendMessage(
-          { type: "OFFSCREEN_UPLOAD_DONE", result: { shareUrl, publicId } },
-          () => void chrome.runtime.lastError
+        const { shareUrl, publicId } = await withTimeout(
+          completeUpload(session.videoId, googleDriveFileId, durationSeconds, thumbnailDataUrl ?? undefined),
+          30000,
+          "finalizar"
         )
+        console.log("[SF] upload: concluído", { shareUrl, publicId })
+
+        sendToSW({ type: "OFFSCREEN_UPLOAD_DONE", result: { shareUrl, publicId } })
       } catch (uploadErr) {
         console.error("[SF] upload falhou no offscreen:", uploadErr)
-        chrome.runtime.sendMessage(
-          { type: "OFFSCREEN_UPLOAD_ERROR", message: String(uploadErr) },
-          () => void chrome.runtime.lastError
-        )
+        sendToSW({ type: "OFFSCREEN_UPLOAD_ERROR", message: String(uploadErr) })
       } finally {
         stopKeepAlive()
       }

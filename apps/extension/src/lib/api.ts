@@ -74,6 +74,9 @@ export async function uploadBlobToDrive(
     xhr.setRequestHeader("Content-Type", blob.type)
     xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`)
     xhr.setRequestHeader("Content-Length", String(blob.size))
+    // Don't let a stalled PUT hang forever (stuck at 0%): fail after 120s idle.
+    xhr.timeout = 120000
+    xhr.ontimeout = () => reject(new Error("Tempo de upload ao Drive esgotado (120s)"))
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) {
