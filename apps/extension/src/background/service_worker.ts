@@ -1,5 +1,6 @@
 import type { ExtensionMessage, RecordingConfig, RecordingState } from "../types"
 import { checkLimits } from "../lib/api"
+import { getApiUrl, getAuthToken } from "../lib/storage"
 
 let recordingState: RecordingState = "idle"
 let startTime: number | null = null
@@ -168,7 +169,11 @@ async function handleStartRecording(config: RecordingConfig) {
     // session so each recording starts from a clean slate.
     await closeOffscreenDocument()
     await ensureOffscreenDocument()
-    chrome.runtime.sendMessage({ type: "START_RECORDING", config })
+
+    // The offscreen document has no chrome.storage access, so read the auth token
+    // + API URL here (the SW has access) and forward them for the upload step.
+    const [token, apiUrl] = await Promise.all([getAuthToken(), getApiUrl()])
+    chrome.runtime.sendMessage({ type: "START_RECORDING", config, auth: { token, apiUrl } })
 
     startTimer()
     broadcastToContent({ type: "SHOW_FLOATING_BAR" })

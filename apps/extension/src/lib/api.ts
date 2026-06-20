@@ -1,9 +1,17 @@
 import { getApiUrl, getAuthToken } from "./storage"
 import type { UploadCompleteResponse, PlanLimitsResponse, UploadPrepareResponse } from "@screenflow/shared"
 
-async function apiFetch(path: string, options: RequestInit = {}) {
-  const baseUrl = await getApiUrl()
-  const token = await getAuthToken()
+// The offscreen document has NO access to chrome.storage, so it cannot call
+// getAuthToken()/getApiUrl(). When running there, the caller passes the token and
+// base URL explicitly (the service worker reads them from storage and forwards them).
+export interface AuthOverride {
+  token?: string | null
+  baseUrl?: string
+}
+
+async function apiFetch(path: string, options: RequestInit = {}, auth?: AuthOverride) {
+  const baseUrl = auth?.baseUrl ?? (await getApiUrl())
+  const token = auth ? auth.token ?? null : await getAuthToken()
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -35,27 +43,28 @@ async function apiFetch(path: string, options: RequestInit = {}) {
   return res.json()
 }
 
-export async function checkLimits(): Promise<PlanLimitsResponse> {
-  return apiFetch("/api/me/limits")
+export async function checkLimits(auth?: AuthOverride): Promise<PlanLimitsResponse> {
+  return apiFetch("/api/me/limits", {}, auth)
 }
 
-export async function createUploadSession(title: string, mimeType: string): Promise<UploadPrepareResponse> {
+export async function createUploadSession(title: string, mimeType: string, auth?: AuthOverride): Promise<UploadPrepareResponse> {
   return apiFetch("/api/uploads/create", {
     method: "POST",
     body: JSON.stringify({ title, mimeType }),
-  })
+  }, auth)
 }
 
 export async function completeUpload(
   videoId: string,
   googleDriveFileId: string,
   durationSeconds: number,
-  thumbnailDataUrl?: string
+  thumbnailDataUrl?: string,
+  auth?: AuthOverride
 ): Promise<UploadCompleteResponse> {
   return apiFetch("/api/uploads/complete", {
     method: "POST",
     body: JSON.stringify({ videoId, googleDriveFileId, durationSeconds, thumbnailDataUrl }),
-  })
+  }, auth)
 }
 
 /**

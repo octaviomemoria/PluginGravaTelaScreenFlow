@@ -14,8 +14,13 @@ export interface RecordingResult {
   publicId: string
 }
 
+export interface UploadAuth {
+  token: string | null
+  apiUrl: string
+}
+
 export type ExtensionMessage =
-  | { type: "START_RECORDING"; config: RecordingConfig }
+  | { type: "START_RECORDING"; config: RecordingConfig; auth?: UploadAuth }
   | { type: "STOP_RECORDING" }
   | { type: "PAUSE_RECORDING" }
   | { type: "RESUME_RECORDING" }

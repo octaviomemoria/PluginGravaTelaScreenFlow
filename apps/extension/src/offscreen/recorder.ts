@@ -1,6 +1,9 @@
-import type { ExtensionMessage, RecordingConfig } from "../types"
-import { createUploadSession, uploadBlobToDrive, completeUpload } from "../lib/api"
+import type { ExtensionMessage, RecordingConfig, UploadAuth } from "../types"
+import { createUploadSession, uploadBlobToDrive, completeUpload, type AuthOverride } from "../lib/api"
 
+// The offscreen document cannot read chrome.storage, so the service worker
+// forwards the auth token + API URL with START_RECORDING; we keep them here.
+let uploadAuth: AuthOverride = {}
 let mediaRecorder: MediaRecorder | null = null
 let recordedChunks: Blob[] = []
 let displayStream: MediaStream | null = null
@@ -47,12 +50,13 @@ async function captureScreenThumbnail(stream: MediaStream): Promise<string | und
   }
 }
 
-async function startRecording(config: RecordingConfig) {
+async function startRecording(config: RecordingConfig, auth?: UploadAuth) {
   recordedChunks = []
   isCancelled = false
   animHandle = null
   startTime = Date.now()
   thumbnailDataUrl = null
+  if (auth) uploadAuth = { token: auth.token, baseUrl: auth.apiUrl }
 
   try {
     let mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
@@ -244,8 +248,8 @@ async function startRecording(config: RecordingConfig) {
             ),
           ])
 
-        console.log("[SF] upload: criando sessão...")
-        const session = await withTimeout(createUploadSession(title, blob.type), 30000, "criar sessão")
+        console.log("[SF] upload: criando sessão...", { hasToken: !!uploadAuth.token, baseUrl: uploadAuth.baseUrl })
+        const session = await withTimeout(createUploadSession(title, blob.type, uploadAuth), 30000, "criar sessão")
         console.log("[SF] upload: sessão criada", { videoId: session.videoId })
 
         const googleDriveFileId = await withTimeout(
@@ -261,7 +265,7 @@ async function startRecording(config: RecordingConfig) {
         console.log("[SF] upload: Drive OK", { googleDriveFileId })
 
         const { shareUrl, publicId } = await withTimeout(
-          completeUpload(session.videoId, googleDriveFileId, durationSeconds, thumbnailDataUrl ?? undefined),
+          completeUpload(session.videoId, googleDriveFileId, durationSeconds, thumbnailDataUrl ?? undefined, uploadAuth),
           30000,
           "finalizar"
         )
@@ -328,7 +332,7 @@ function stopStreams() {
 chrome.runtime.onMessage.addListener((message: ExtensionMessage) => {
   switch (message.type) {
     case "START_RECORDING":
-      startRecording(message.config)
+      startRecording(message.config, message.auth)
       break
     case "STOP_RECORDING":
       stopRecording()
