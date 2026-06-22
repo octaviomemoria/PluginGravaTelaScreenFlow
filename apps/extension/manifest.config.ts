@@ -3,7 +3,7 @@ import { defineManifest } from "@crxjs/vite-plugin"
 export default defineManifest({
   manifest_version: 3,
   name: "ScreenFlow Recorder",
-  version: "1.0.0",
+  version: "1.0.1",
   description: "Grave sua tela e compartilhe em segundos",
   permissions: ["storage", "tabs", "offscreen", "scripting"],
   host_permissions: ["<all_urls>"],

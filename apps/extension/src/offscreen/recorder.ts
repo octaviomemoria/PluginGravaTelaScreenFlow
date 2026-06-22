@@ -235,6 +235,9 @@ async function startRecording(config: RecordingConfig, auth?: UploadAuth) {
       // dependency on the MV3 service worker staying alive during the upload.
       // Wrapped in an overall timeout so a stalled request never hangs silently.
       try {
+        if (!uploadAuth.token) {
+          throw new Error("Sessão não encontrada. Abra o dashboard e faça login, depois tente gravar novamente.")
+        }
         const isAudio = mimeType.startsWith("audio/")
         const title = isAudio
           ? `Áudio ${new Date().toLocaleDateString("pt-BR")}`
